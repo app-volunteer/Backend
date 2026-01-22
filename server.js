@@ -1,12 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import puppeteer from 'puppeteer';
-import htmlDocx from 'html-docx-js';
+import htmlToDocx from 'html-to-docx';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// CORS Configuration
+// CORS Configuration supporting multiple environments
 const corsOptions = {
   origin: [
     'https://land-app-three.vercel.app',
@@ -23,61 +23,34 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 
-// Browser instance management
+// Browser instance management for high-availability
 let browserInstance = null;
 let browserLaunchPromise = null;
 
 async function getBrowser() {
-  // If browser is already launching, wait for it
-  if (browserLaunchPromise) {
-    return browserLaunchPromise;
-  }
+  if (browserLaunchPromise) return browserLaunchPromise;
+  if (browserInstance && browserInstance.isConnected()) return browserInstance;
 
-  // If browser exists and is connected, return it
-  if (browserInstance && browserInstance.isConnected()) {
-    return browserInstance;
-  }
-
-  // Launch new browser
   browserLaunchPromise = puppeteer.launch({
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium', // Let puppeteer decide if not specified
     headless: 'new',
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--disable-software-rasterizer',
-      '--no-first-run',
       '--no-zygote',
-      '--disable-extensions',
-      '--disable-background-networking',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-breakpad',
-      '--disable-component-extensions-with-background-pages',
-      '--disable-features=TranslateUI,BlinkGenPropertyTrees',
-      '--disable-ipc-flooding-protection',
-      '--disable-renderer-backgrounding',
-      '--enable-features=NetworkService,NetworkServiceInProcess',
-      '--force-color-profile=srgb',
-      '--hide-scrollbars',
-      '--metrics-recording-only',
-      '--mute-audio',
+      '--single-process'
     ],
-    ignoreHTTPSErrors: true,
     timeout: 60000,
   });
 
   try {
     browserInstance = await browserLaunchPromise;
-    
-    // Handle browser disconnect
     browserInstance.on('disconnected', () => {
       console.log('Browser disconnected, will relaunch on next request');
       browserInstance = null;
     });
-
     return browserInstance;
   } catch (error) {
     browserInstance = null;
@@ -99,95 +72,40 @@ app.post('/api/generate-pdf', async (req, res) => {
 
   try {
     console.log(`[PDF] Starting generation for ${filename}`);
-    
     const browser = await getBrowser();
     page = await browser.newPage();
 
-    // Set viewport for consistent rendering
-    await page.setViewport({ 
-      width: 1920, 
-      height: 1080,
-      deviceScaleFactor: 1 
+    await page.setViewport({ width: 1200, height: 1600, deviceScaleFactor: 2 });
+    
+    // Set content and wait for it to be fully rendered
+    await page.setContent(html, { 
+      waitUntil: ["networkidle0", "load", "domcontentloaded"],
+      timeout: 60000 
     });
 
-    // Clean HTML - remove any potential issues
-    const cleanHtml = html
-      .replace(/src="data:image\/[^"]*"/g, (match) => {
-        // Ensure base64 images are properly formatted
-        return match;
-      })
-      .trim();
-
-    // Set content with proper waiting
-    await page.setContent(cleanHtml, {
-      waitUntil: ['load', 'networkidle0'],
-      timeout: 30000,
-    });
-
-    // Wait a bit for any dynamic content
-    await page.waitForTimeout(1000);
-
-    console.log('[PDF] Content loaded, generating PDF...');
+    // Wait a bit for images and fonts to settle (Puppeteer 24 compatible)
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
-      margin: {
-        top: '20mm',
-        right: '15mm',
-        bottom: '20mm',
-        left: '15mm',
-      },
-      landscape: false,
-      scale: 1,
-      preferCSSPageSize: false,
-      displayHeaderFooter: false,
+      margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
+      preferCSSPageSize: true
     });
 
     const duration = Date.now() - startTime;
-    console.log(`[PDF] Generated successfully in ${duration}ms, size: ${pdfBuffer.length} bytes`);
+    console.log(`[PDF] Generated successfully in ${duration}ms`);
 
-    // Verify buffer is valid
-    if (!pdfBuffer || pdfBuffer.length === 0) {
-      throw new Error('Generated PDF buffer is empty');
-    }
-
-    // Set response headers properly
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Length', pdfBuffer.length);
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${filename.replace(/[^a-z0-9-_.]/gi, '_')}.pdf"`
-    );
-    res.setHeader('Cache-Control', 'no-cache');
-
-    // Send as buffer
-    res.end(pdfBuffer, 'binary');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/[^a-z0-9-_.]/gi, '_')}.pdf"`);
+    res.send(pdfBuffer);
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error(`[PDF] Generation failed after ${duration}ms:`, error.message);
-    
-    // If browser connection failed, reset it
-    if (error.message.includes('Target closed') || error.message.includes('Protocol error')) {
-      browserInstance = null;
-    }
-
-    // Don't send response if headers already sent
+    console.error(`[PDF] Generation failed:`, error.message);
     if (!res.headersSent) {
-      res.status(500).json({
-        error: 'Failed to generate PDF',
-        message: error.message,
-        hint: 'Server may be under heavy load. Please try again.',
-      });
+      res.status(500).json({ error: 'Failed to generate PDF', message: error.message });
     }
   } finally {
-    if (page) {
-      try {
-        await page.close();
-      } catch (err) {
-        console.error('[PDF] Error closing page:', err.message);
-      }
-    }
+    if (page) await page.close();
   }
 });
 
@@ -201,75 +119,27 @@ app.post('/api/generate-docx', async (req, res) => {
   try {
     console.log(`[DOCX] Starting generation for ${filename}`);
     
-    // Convert HTML to DOCX buffer
-    const docxBlob = htmlDocx.asBlob(html, {
-      orientation: 'portrait',
-      margins: { top: 720, right: 720, bottom: 720, left: 720 }
+    // Using html-to-docx which is stable in Node environments
+    const docxBuffer = await htmlToDocx(html, null, {
+      margin: { top: 720, right: 720, bottom: 720, left: 720 },
+      orientation: 'portrait'
     });
 
-    // Convert Blob to Buffer for Node.js
-    const arrayBuffer = await docxBlob.arrayBuffer();
-    const docxBuffer = Buffer.from(arrayBuffer);
-
-    console.log(`[DOCX] Generated successfully, size: ${docxBuffer.length} bytes`);
-
-    // Verify buffer is valid
-    if (!docxBuffer || docxBuffer.length === 0) {
-      throw new Error('Generated DOCX buffer is empty');
-    }
-
-    // Set response headers
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.setHeader('Content-Length', docxBuffer.length);
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${filename.replace(/[^a-z0-9-_.]/gi, '_')}.docx"`
-    );
-    res.setHeader('Cache-Control', 'no-cache');
-
-    // Send the buffer
-    res.end(docxBuffer, 'binary');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/[^a-z0-9-_.]/gi, '_')}.docx"`);
+    res.send(docxBuffer);
   } catch (error) {
     console.error('[DOCX] Generation failed:', error.message);
-    
     if (!res.headersSent) {
-      res.status(500).json({
-        error: 'Failed to generate Word document',
-        message: error.message,
-      });
+      res.status(500).json({ error: 'Failed to generate DOCX', message: error.message });
     }
   }
 });
 
-// Health check endpoint
 app.get('/health', (req, res) => {
-  const isConnected = browserInstance && browserInstance.isConnected();
-  res.json({ 
-    status: 'ok',
-    browser: isConnected ? 'connected' : 'disconnected',
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-  });
-});
-
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, closing browser...');
-  if (browserInstance) {
-    await browserInstance.close();
-  }
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, closing browser...');
-  if (browserInstance) {
-    await browserInstance.close();
-  }
-  process.exit(0);
+  res.json({ status: 'ok', uptime: process.uptime() });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`PDF generation service running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`LandScale Render Node active on port ${PORT}`);
 });
