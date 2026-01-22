@@ -6,8 +6,21 @@ import htmlDocx from 'html-docx-js';
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Middleware
-app.use(cors());
+// CORS Configuration
+const corsOptions = {
+  origin: [
+    'https://land-app-three.vercel.app',
+    'http://localhost:5173',
+    'http://localhost:3000',
+    /\.vercel\.app$/, // Allow all Vercel preview deployments
+  ],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 
 // Browser instance management
