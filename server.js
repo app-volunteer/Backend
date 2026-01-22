@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import puppeteer from 'puppeteer';
-import { htmlToDocx } from 'html-docx-js';
+import htmlDocx from 'html-docx-js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -165,10 +165,9 @@ app.post('/api/generate-docx', async (req, res) => {
   try {
     console.log(`[DOCX] Starting generation for ${filename}`);
     
-    const docxBuffer = htmlToDocx(html, null, {
-      table: { row: { cantSplit: true } },
-      footer: true,
-      pageNumber: true,
+    const docxBuffer = htmlDocx.asBlob(html, {
+      orientation: 'portrait',
+      margins: { top: 720, right: 720, bottom: 720, left: 720 }
     });
 
     console.log('[DOCX] Generated successfully');
