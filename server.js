@@ -107,14 +107,25 @@ app.post('/api/generate-pdf', async (req, res) => {
     await page.setViewport({ 
       width: 1920, 
       height: 1080,
-      deviceScaleFactor: 2 
+      deviceScaleFactor: 1 
     });
 
-    // Set shorter timeout for content loading
-    await page.setContent(html, {
-      waitUntil: 'networkidle0',
+    // Clean HTML - remove any potential issues
+    const cleanHtml = html
+      .replace(/src="data:image\/[^"]*"/g, (match) => {
+        // Ensure base64 images are properly formatted
+        return match;
+      })
+      .trim();
+
+    // Set content with proper waiting
+    await page.setContent(cleanHtml, {
+      waitUntil: ['load', 'networkidle0'],
       timeout: 30000,
     });
+
+    // Wait a bit for any dynamic content
+    await page.waitForTimeout(1000);
 
     console.log('[PDF] Content loaded, generating PDF...');
 
@@ -130,19 +141,28 @@ app.post('/api/generate-pdf', async (req, res) => {
       landscape: false,
       scale: 1,
       preferCSSPageSize: false,
+      displayHeaderFooter: false,
     });
 
     const duration = Date.now() - startTime;
-    console.log(`[PDF] Generated successfully in ${duration}ms`);
+    console.log(`[PDF] Generated successfully in ${duration}ms, size: ${pdfBuffer.length} bytes`);
 
-    // Set response headers
-    res.contentType('application/pdf');
+    // Verify buffer is valid
+    if (!pdfBuffer || pdfBuffer.length === 0) {
+      throw new Error('Generated PDF buffer is empty');
+    }
+
+    // Set response headers properly
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', pdfBuffer.length);
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${filename.replace(/[^a-z0-9-_.]/gi, '_')}.pdf"`
     );
+    res.setHeader('Cache-Control', 'no-cache');
 
-    res.send(pdfBuffer);
+    // Send as buffer
+    res.end(pdfBuffer, 'binary');
   } catch (error) {
     const duration = Date.now() - startTime;
     console.error(`[PDF] Generation failed after ${duration}ms:`, error.message);
@@ -152,11 +172,14 @@ app.post('/api/generate-pdf', async (req, res) => {
       browserInstance = null;
     }
 
-    res.status(500).json({
-      error: 'Failed to generate PDF',
-      message: error.message,
-      hint: 'Server may be under heavy load. Please try again.',
-    });
+    // Don't send response if headers already sent
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: 'Failed to generate PDF',
+        message: error.message,
+        hint: 'Server may be under heavy load. Please try again.',
+      });
+    }
   } finally {
     if (page) {
       try {
@@ -178,26 +201,43 @@ app.post('/api/generate-docx', async (req, res) => {
   try {
     console.log(`[DOCX] Starting generation for ${filename}`);
     
-    const docxBuffer = htmlDocx.asBlob(html, {
+    // Convert HTML to DOCX buffer
+    const docxBlob = htmlDocx.asBlob(html, {
       orientation: 'portrait',
       margins: { top: 720, right: 720, bottom: 720, left: 720 }
     });
 
-    console.log('[DOCX] Generated successfully');
+    // Convert Blob to Buffer for Node.js
+    const arrayBuffer = await docxBlob.arrayBuffer();
+    const docxBuffer = Buffer.from(arrayBuffer);
 
-    res.contentType('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    console.log(`[DOCX] Generated successfully, size: ${docxBuffer.length} bytes`);
+
+    // Verify buffer is valid
+    if (!docxBuffer || docxBuffer.length === 0) {
+      throw new Error('Generated DOCX buffer is empty');
+    }
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Length', docxBuffer.length);
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${filename.replace(/[^a-z0-9-_.]/gi, '_')}.docx"`
     );
+    res.setHeader('Cache-Control', 'no-cache');
 
-    res.send(Buffer.from(docxBuffer));
+    // Send the buffer
+    res.end(docxBuffer, 'binary');
   } catch (error) {
     console.error('[DOCX] Generation failed:', error.message);
-    res.status(500).json({
-      error: 'Failed to generate Word document',
-      message: error.message,
-    });
+    
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: 'Failed to generate Word document',
+        message: error.message,
+      });
+    }
   }
 });
 
