@@ -1,16 +1,17 @@
 {
-  "name": "landscale-pdf-backend",
+  "name": "html-to-pdf-server",
   "version": "1.0.0",
-  "description": "Puppeteer-based PDF generation service",
-  "main": "server.js",
+  "description": "HTML to PDF and DOCX API using Express, Puppeteer and html-docx-js",
   "type": "module",
-  "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "puppeteer": "^24.3.0",
-    "html-docx-js": "^0.3.1"
-  },
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "html-docx-js": "^0.3.1",
+    "puppeteer": "^23.0.0",
+    "body-parser": "^1.20.2"
   }
 }
