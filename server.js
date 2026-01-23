@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import puppeteer from 'puppeteer-core';
+import puppeteer from 'puppeteer'; // full puppeteer
 import bodyParser from "body-parser";
 import htmlDocx from 'html-docx-js';
 
@@ -13,7 +13,7 @@ app.use(express.json({ limit: '50mb' })); // Increased for images
 app.use(bodyParser.json({ limit: "50mb" }));
 
 // 👉 CHANGE THIS PATH IF EDGE IS INSTALLED ELSEWHERE
-const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+// const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 
 // ================= PDF Generation (UNCHANGED) =================
 app.post('/api/generate-pdf', async (req, res) => {
@@ -25,14 +25,14 @@ app.post('/api/generate-pdf', async (req, res) => {
 
   let browser;
   try {
-    browser = await puppeteer.launch({
-      executablePath: EDGE_PATH,
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox'
-      ]
-    });
+browser = await puppeteer.launch({
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+  headless: 'new',
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox'
+  ]
+});
 
     const page = await browser.newPage();
 
